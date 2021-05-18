@@ -4,3 +4,7 @@
 ### 构建项目结构
 ## Day 2 - 编写网站骨架
 ### 服务器应用`app.py`
+## Day 3 - 编写ORM
+### 创建连接池
+### Select 和 Insert, Update, Delete
+### 定义ORM映射的基类`Model`
