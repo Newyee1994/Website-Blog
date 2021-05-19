@@ -59,11 +59,12 @@ async def execute(sql, args, autocommit=True):
 # ====================================================================================================
 class Field:
 
-    def __init__(self, name, column_type, primary_key, default):
+    def __init__(self, name, column_type, primary_key, default, nullable):
         self.name = name
         self.column_type = column_type
         self.primary_key = primary_key
         self.default = default
+        self.nullable = nullable    # 用于确定它是否可以为空
 
     def __str__(self):
         return f'<{self.__class__.__name__}, {self.column_type}:{self.name}>'
@@ -71,37 +72,50 @@ class Field:
 
 class StringField(Field):
 
-    def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
-        super().__init__(name, ddl, primary_key, default)
+    def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)', nullable=True):
+        super().__init__(name, ddl, primary_key, default, nullable)
 
 
 class BooleanField(Field):
 
     def __init__(self, name=None, default=False):
-        super().__init__(name, 'boolean', False, default)
+        super().__init__(name, 'boolean', False, default, False)
 
 
 class IntegerField(Field):
 
-    def __init__(self, name=None, primary_key=False, default=0):
-        super().__init__(name, 'bigint', primary_key, default)
+    def __init__(self, name=None, primary_key=False, default=0, nullable=True):
+        super().__init__(name, 'bigint', primary_key, default, nullable)
 
 
 class FloatField(Field):
 
-    def __init__(self, name=None, primary_key=False, default=0.0):
-        super().__init__(name, 'real', primary_key, default)
+    def __init__(self, name=None, primary_key=False, default=0.0, nullable=True):
+        super().__init__(name, 'real', primary_key, default, nullable)
 
 
 class TextField(Field):
 
-    def __init__(self, name=None, default=None):
-        super().__init__(name, 'text', False, default)
+    def __init__(self, name=None, default=None, nullable=True):
+        super().__init__(name, 'text', False, default, nullable)
 
 
 # ====================================================================================================
 def create_args_string(num):
     return ', '.join(('?',) * num)
+
+
+def get_column_string(mappings) -> str:
+    """ 生成每个列连成的字符串，每一列的格式为 `列名` 类型 [not null]
+    首先在每一列之间添加逗号，然后使用一个 map 函数，将 mappings.items() 中的每一个 item 都赋值给 s，这每个 item 都是一个 list，s[0] 是键，也就是变量名，s[1] 是值，也就是 Field，然后将它们格式化成字符串，形式就是上面说的 `列名` 类型 [not null] ，如果 Field 中指定了 name 则使用，没有则使用变量名。这里说一下，我的 Field 中增加了一个 nullable 属性，用于确定它是否可以为空，和教程的略有不同。
+    :param mappings: 字典，键是变量名，值是 Field
+    :return:
+    """
+    return ', '.join(map(lambda s: "`%s` %s %s" % (
+        s[1].name or s[0],
+        s[1].column_type,
+        '' if s[1].nullable else 'not null'),
+                         mappings.items()))
 
 
 class ModelMetaclass(type):
@@ -149,7 +163,9 @@ class ModelMetaclass(type):
             '__insert__'] = f"insert into `{tableName}` ({', '.join(escaped_fields)}, `{primaryKey}`) values ({create_args_string(len(escaped_fields) + 1)})"
         attrs[
             '__update__'] = f"update `{tableName}` set {', '.join(map(lambda f: f'`{mappings.get(f).name or f}`=?', fields))} where `{primaryKey}`=?"
-        attrs['__delete__'] = f'delete from `{tableName}` where `{primaryKey}`=?'
+        attrs['__delete__'] = f"delete from `{tableName}` where `{primaryKey}`=?"
+        # 新增动态创建表
+        attrs['__create__'] = "create table if not exists `%s` (%s, primary key (`%s`)) engine=InnoDB default charset=utf8mb4;" % (tableName, get_column_string(mappings), mappings.get(primaryKey).name or primaryKey)
         return type.__new__(cls, name, bases, attrs)
 
 
@@ -166,10 +182,10 @@ class Model(dict, metaclass=ModelMetaclass):
     def __setattr__(self, key, value):
         self[key] = value
 
-    def getVale(self, key):
+    def getValue(self, key):
         return getattr(self, key, None)
 
-    def getValeOrDefault(self, key):
+    def getValueOrDefault(self, key):
         value = getattr(self, key, None)
         if value is None:
             field = self.__mappings__[key]
@@ -245,3 +261,8 @@ class Model(dict, metaclass=ModelMetaclass):
         rows = await execute(self.__delete__, args)
         if rows != 1:
             logging.warning(f'Failed to remove by primary key: affected rows: {rows}')
+
+    @classmethod
+    async def create(cls):
+        """ Create table if table (with the same name) not exists. """
+        await execute(cls.__create__, None)
