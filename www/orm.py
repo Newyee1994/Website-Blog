@@ -29,16 +29,13 @@ async def create_pool(loop, **kw):
 async def select(sql, args, size=None):
     log(sql, args)
     global __pool
-    # with (await __pool) as conn:
     async with __pool.get() as conn:
-        # cur = await conn.cursor(aiomysql.DictCursor)
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(sql.replace('?', '%s'), args or ())
             if size:
                 rs = await cur.fetchmany(size)
             else:
                 rs = await cur.fetchall()
-        # await cur.close()
         logging.info(f'Rows Returned: {len(rs)}')
         return rs
 
@@ -49,14 +46,12 @@ async def execute(sql, args, autocommit=True):
         if not autocommit:
             await conn.begin()
         try:
-            # cur = await conn.cursor()
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(sql.replace('?', '%s'), args)
                 affected = cur.rowcount
-            # await cur.close()
             if not autocommit:
                 await conn.commit()
-        except BaseException as e:
+        except BaseException:
             raise
         return affected
 
@@ -106,15 +101,18 @@ class TextField(Field):
 
 # ====================================================================================================
 def create_args_string(num):
-    L = []
-    for n in range(num):
-        L.append('?')
-    return ', '.join(L)
+    return ', '.join(('?',) * num)
 
 
 class ModelMetaclass(type):
 
     def __new__(cls, name, bases, attrs):
+        """
+
+        :param name: 类的名字 str
+        :param bases: 类继承的父类集合 Tuple
+        :param attrs: 类的方法集合
+        """
         # 排除 Model 类本身
         if name == 'Model':
             return type.__new__(cls, name, bases, attrs)
@@ -141,10 +139,10 @@ class ModelMetaclass(type):
         for k in mappings.keys():
             attrs.pop(k)
         escaped_fields = list(map(lambda f: f'`{f}`', fields))
-        attrs['__mappings__'] = mappings  # 保存属性和列的映射关系
-        attrs['__table__'] = tableName
-        attrs['__primary_key__'] = primaryKey  # 主键属性名
-        attrs['__fields__'] = fields  # 除主键外的属性名
+        attrs['__mappings__'] = mappings            # 保存属性和列的映射关系
+        attrs['__table__'] = tableName              # table 名称
+        attrs['__primary_key__'] = primaryKey       # 主键属性名
+        attrs['__fields__'] = fields                # 除主键外的属性名
         # 构造默认的 Select, Insert, Update, Delete 语句
         attrs['__select__'] = f"select `{primaryKey}`, {', '.join(escaped_fields)} from `{tableName}`"
         attrs[
