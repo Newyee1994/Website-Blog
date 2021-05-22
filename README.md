@@ -12,3 +12,8 @@
 ### `models.py`
 ### 初始化数据库表
 ### 编写数据访问代码
+## Day 5 - 搭建Web框架
+### @get和@post
+### 定义RequestHandler
+### middleware
+### 处理分页和API错误
