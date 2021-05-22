@@ -35,32 +35,38 @@ class Dict(dict):
         return d
 
 
-def merge(defaults, override):
-    r = {}
-    for k, v in defaults.items():
-        if k in override:
-            if isinstance(v, dict):
-                r[k] = merge(v, override[k])
-            else:
-                r[k] = override[k]
-        else:
-            r[k] = v
-    return r
-
-
 def toDict(d):
+    """ 将一个dict转为Dict """
     D = Dict()
     for k, v in d.items():
         D[k] = toDict(v) if isinstance(v, dict) else v
     return D
 
 
+def merge(defaults, overrides):
+    """ 合并 defaults 和 overrides 字典中的配置信息，overrides 优先"""
+    r = {}
+    for k, v in defaults.items():
+        if k in overrides:
+            if isinstance(v, dict):
+                r[k] = merge(v, overrides[k])
+            else:
+                r[k] = overrides[k]
+        else:
+            r[k] = v
+    return r
+
+
+# 读取 config_default 和 config_override 并合并，config_override 优先
 configs = config_default.configs
 
 try:
     import config_override
-    configs - merge(configs, config_override.configs)
+    configs = merge(configs, config_override.configs)
 except ImportError:
     pass
 
-configs = toDict(configs)
+# configs = toDict(configs)
+# print(configs)
+configs = Dict.from_dict(configs)
+# print(configs)
