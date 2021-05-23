@@ -91,7 +91,7 @@ class RequestHandler:
         self._func = fn
         self._has_request_arg = has_request_arg(fn)
         self._has_var_kw_arg = has_var_kw_arg(fn)
-        self._has_named_kw_args = get_named_kw_args(fn)
+        self._has_named_kw_args = has_named_kw_args(fn)
         self._named_kw_args = get_named_kw_args(fn)
         self._required_kw_args = get_required_kw_args(fn)
 
@@ -100,12 +100,14 @@ class RequestHandler:
         kw = None
         if self._has_var_kw_arg or self._has_named_kw_args or self._required_kw_args:
             if request.method == 'POST':
-                return web.HTTPBadRequest(text='Missing Content-Type')
-            ct = request.content_type.lower()
-            if ct.startswith('application/json'):
-                params = await request.json()
-                if not isinstance(params, dict):
-                    return web.HTTPBadRequest(text='JSON body must be object.')
+                if not request.content_type:
+                    return web.HTTPBadRequest(text='Missing Content-Type.')
+                ct = request.content_type.lower()
+                if ct.startswith('application/json'):
+                    params = await request.json()
+                    if not isinstance(params, dict):
+                        return web.HTTPBadRequest(text='JSON body must be object.')
+                    kw = params
                 elif ct.startswith('application/x-www-form-urlencoded') or ct.startswith('multipart/form-data'):
                     params = await request.post()
                     kw = dict(**params)
@@ -114,6 +116,9 @@ class RequestHandler:
             if request.method == 'GET':
                 qs = request.query_string
                 if qs:
+                    # kw = dict()
+                    # for k, v in parse.parse_qs(qs, True).items():
+                    #     kw[k] = v[0]
                     kw = {k: v[0] for k, v in parse.parse_qs(qs, True).items()}
         if kw is None:
             kw = dict(**request.match_info)
@@ -122,7 +127,7 @@ class RequestHandler:
                 # remove all unamed kw:
                 copy = dict()
                 for name in self._named_kw_args:
-                    if name in  kw:
+                    if name in kw:
                         copy[name] = kw[name]
                 kw = copy
             # check named arg
