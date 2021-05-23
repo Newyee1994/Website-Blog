@@ -13,9 +13,24 @@ import base64
 import asyncio
 from coroweb import get, post
 from models import User, Comment, Blog, next_id
+from apis import Page, APIValueError, APIResourceNotFoundError, APIPermissionError, APIError
+
+
+def get_page_index(page_str):
+    """ 获取页码信息 """
+    p = 1
+    try:
+        p = int(page_str)
+    except ValueError as e:
+        pass
+    if p < 1:
+        p = 1
+    return p
+
 
 @get('/')
 async def index(request):
+    """ 处理首页URL """
     # users = await User.findAll()
     # return {
     #     '__template__': 'test.html',
@@ -31,3 +46,21 @@ async def index(request):
         '__template__': 'blogs.html',
         'blogs': blogs
     }
+
+
+@get('/api/users')
+async def api_get_users(*, page='1'):
+    """ 获取用户信息API """
+    # users = await User.findAll(orderBy='created_at desc')
+    # for u in users:
+    #     u.passwd = '*' * 6
+    # return dict(users=users)
+    page_index = get_page_index(page)
+    num = await User.findNumber('count(id)')
+    p = Page(num, page_index)
+    if num == 0:
+        return dict(page=p, users=())
+    users = await User.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+    for u in users:
+        u.passwd = '*' * 6
+    return dict(page=p, users=users)
