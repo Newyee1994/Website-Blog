@@ -28,3 +28,9 @@
 ## Day 7 - 编写MVC
 ### 处理首页URL
 ### 模板文件`test.html`
+
+## Day 8 - 构建前端
+### 下载 CSS 框架
+### 编写父模板
+### 编写首页 HTML
+### 更新handlers.py和app.py
