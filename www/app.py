@@ -5,16 +5,18 @@ async web application.
 """
 
 import logging; logging.basicConfig(level=logging.INFO)
-from aiohttp import web
-import asyncio
-import json
-import time
 import os
+import time
+import json
+import asyncio
+from aiohttp import web
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
+
 import orm
-from coroweb import add_routes, add_static
 from config import configs
+from coroweb import add_routes, add_static
+from handlers import cookie2user, COOKIE_NAME
 
 
 # async def index(request):
@@ -54,7 +56,6 @@ def init_jinja2(app, **kw):
 # 以下是middleware,可以把通用的功能从每个URL处理函数中拿出来集中放到一个地方
 async def logger_factory(app, handler):
     """ URL处理日志工厂 """
-
     async def logger(request):
         logging.info(f'Request: {request.method} {request.path}')
         # await asyncio.sleep(0.3)
@@ -63,11 +64,39 @@ async def logger_factory(app, handler):
     return logger
 
 
+async def auth_factory(app, handler):
+    """ 认证处理工厂--把当前用户绑定到request上，并对URL/manage/进行拦截 """
+    async def auth(request):
+        logging.info(f'Check user: {request.method} {request.path}')
+        request.__user__ = None
+        cookie_str = request.cookies.get(COOKIE_NAME)
+        if cookie_str:
+            user = await cookie2user(cookie_str)
+            if user:
+                logging.info(f'Set current user: {user.email}')
+                request.__user__ = user
+        return (await handler(request))
+    return auth
+
+
+async def data_factory(app, handler):
+    """ 数据处理工厂 """
+    async def parse_data(request):
+        if request.method == 'POST':
+            if request.content_type.startswith('application/json'):
+                request.__data__ = await request.json()
+                logging.info(f'Request json: {str(request.__data__)}')
+            elif request.content_type.startswith('application/x-www-form-urlencoded'):
+                request.__data__ = await request.post()
+                logging.info(f'Request form: {str(request.__data__)}')
+        return (await handler(request))
+    return parse_data
+
+
 async def response_factory(app, handler):
     """ 响应返回处理工厂 """
-
     async def response(request):
-        logging.info('Resopnse handler...')
+        logging.info('Response handler...')
         r = await handler(request)
         if isinstance(r, web.StreamResponse):
             return r
@@ -76,7 +105,7 @@ async def response_factory(app, handler):
             resp.content_type = 'application/octet-stream'
             return resp
         if isinstance(r, str):
-            if r.startswith('redirect'):
+            if r.startswith('redirect:'):
                 return web.HTTPFound(r[9:])
             resp = web.Response(body=r.encode('utf-8'))
             resp.content_type = 'text/html;charset=utf-8'
@@ -89,6 +118,7 @@ async def response_factory(app, handler):
                 resp.content_type = 'application/json;charset=utf-8'
                 return resp
             else:
+                r['__user__'] = request.__user__
                 resp = web.Response(body=app['__templating__'].get_template(template).render(**r).encode('utf-8'))
                 resp.content_type = 'text/html;charset=utf-8'
                 return resp
@@ -98,7 +128,7 @@ async def response_factory(app, handler):
             t, m = r
             if isinstance(t, int) and t >= 200 and t < 600:
                 return web.Response(t, str(m))
-        # default
+        # default:
         resp = web.Response(body=str(r).encode('utf-8'))
         resp.content_type = 'text/plain;charset=utf-8'
         return resp
@@ -127,7 +157,7 @@ async def init(loop):
     app = web.Application(
         loop=loop,
         middlewares=[
-            logger_factory, response_factory
+            logger_factory, auth_factory, response_factory
         ]
     )
     init_jinja2(app, filters=dict(datetime=datetime_filter))

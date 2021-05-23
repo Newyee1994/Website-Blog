@@ -11,9 +11,52 @@ import logging
 import hashlib
 import base64
 import asyncio
+from aiohttp import web
+
+from config import configs
 from coroweb import get, post
 from models import User, Comment, Blog, next_id
 from apis import Page, APIValueError, APIResourceNotFoundError, APIPermissionError, APIError
+
+
+COOKIE_NAME = 'awesession'
+_COOKIE_KEY = configs.session.secret
+_RE_EMAIL = re.compile(r'^[a-z0-9\.\-\_]+\@[a-z0-9\-\_]+(\.[a-z0-9\-\_]+){1,4}$')
+_RE_SHA1 = re.compile(r'^[0-9a-f]{40}$')
+
+
+def user2cookie(user, max_page):
+    """ 计算加密cookie：Generate cookie str by user."""
+    # build cookie string by: id-expires-sha1
+    expires = str(int(time.time() + max_page))
+    s = '-'.join((user.id, user.passwd, expires, _COOKIE_KEY))
+    lst = [user.id, expires, hashlib.sha1(s.encode('utf-8')).hexdigest()]
+    return '-'.join(lst)
+
+
+async def cookie2user(cookie_str: str):
+    """ 解密cookie：Parse cookie and load user if cookie is valid. """
+    if not cookie_str:
+        return None
+    try:
+        lst = cookie_str.split('-')
+        if len(lst) != 3:
+            return None
+        uid, expires, sha1 = lst
+        if int(expires) < time.time():
+            return None
+        user = await User.find(uid)
+        if user is None:
+            return None
+        s = '-'.join((uid, user.passwd, expires, _COOKIE_KEY))
+        if sha1 != hashlib.sha1(s.encode('utf-8')).hexdigest():
+            logging.info('Invalid sha1.')
+            return None
+        user.passwd = '*' * 6
+        return user
+    except Exception as e:
+        logging.exception(e)
+        return None
 
 
 def get_page_index(page_str):
@@ -44,8 +87,88 @@ async def index(request):
     ]
     return {
         '__template__': 'blogs.html',
-        'blogs': blogs
+        'blogs': blogs,
+        # '__user__': request.__user__
     }
+
+
+@get('/register')
+def register():
+    """ 处理注册页面URL """
+    return {
+        '__template__': 'register.html'
+    }
+
+
+@get('/signin')
+def signin():
+    """ 处理登录页面URL """
+    return {
+        '__template__': 'signin.html'
+    }
+
+
+@get('/signout')
+def signout(request):
+    """ 用户注销 """
+    referer = request.headers.get('Referer')
+    r = web.HTTPFound(referer or '/')
+    r.set_cookie(COOKIE_NAME, '-deleted-', max_age=0, httponly=True)
+    logging.info('User signed out.')
+    return r
+
+
+@post('/api/authenticate')
+async def authenticate(*, email, passwd):
+    """ 用户登录验证 """
+    if not email:
+        raise APIValueError('email', 'Invalid email.')
+    if not passwd:
+        raise APIValueError('passwd', 'Invalid password.')
+    users = await User.findAll('email=?', [email])
+    if len(users) == 0:
+        raise APIValueError('email', 'Email not exist.')
+    user = users[0]
+    # check passwd:
+    sha1 = hashlib.sha1()
+    sha1.update(user.id.encode('utf-8'))
+    sha1.update(b':')
+    sha1.update(passwd.encode('utf-8'))
+    if user.passwd != sha1.hexdigest():
+        raise APIValueError('passwd', 'Invalid password.')
+    # authenticate ok, set cookie:
+    r = web.Response()
+    r.set_cookie(COOKIE_NAME, user2cookie(user, 86400), max_age=86400, httponly=True)
+    user.passwd = '*' * 6
+    r.content_type = 'application/json'
+    r.body = json.dumps(user, ensure_ascii=False).encode('utf-8')
+    return r
+
+
+@post('/api/users')
+async def api_register_user(*, email, name, passwd):
+    """ 用户注册API """
+    if not name or not name.strip():
+        raise APIValueError('name')
+    if not email or not _RE_EMAIL.match(email):
+        raise APIValueError('email')
+    if not passwd or not _RE_SHA1.match(passwd):
+        raise APIValueError('passwd')
+    users = await User.findAll('email=?', [email])
+    if len(users) > 0:
+        raise APIError('register:failed', 'email', 'Email is already in use')
+    uid = next_id()
+    sha1_passwd = f'{uid}:{passwd}'
+    user = User(id=uid, name=name.strip(), email=email, passwd=hashlib.sha1(sha1_passwd.encode('utf-8')).hexdigest(),
+                image=f'http://www.gravatar.com/avatar/{hashlib.md5(email.encode("utf-8")).hexdigest()}?d=mm&s=120')
+    await user.save()
+    # make session cookie:
+    r = web.Response()
+    r.set_cookie(COOKIE_NAME, user2cookie(user, 86400), max_age=86400, httponly=True)
+    user.passwd = '*' * 6
+    r.content_type = 'application/json'
+    r.body = json.dumps(user, ensure_ascii=False).encode('utf-8')
+    return r
 
 
 @get('/api/users')
