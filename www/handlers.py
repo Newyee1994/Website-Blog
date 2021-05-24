@@ -85,24 +85,39 @@ async def cookie2user(cookie_str: str):
         return None
 
 
+# @get('/')
+# async def index(request):
+#     """ 处理首页URL """
+#     # users = await User.findAll()
+#     # return {
+#     #     '__template__': 'test.html',
+#     #     'users': users
+#     # }
+#     summary = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
+#     blogs = [
+#         Blog(id='1', name='Test Blog', summary=summary, created_at=time.time()-120),
+#         Blog(id='2', name='Something New', summary=summary, created_at=time.time()-3600),
+#         Blog(id='3', name='Learn Swift', summary=summary, created_at=time.time()-7200)
+#     ]
+#     return {
+#         '__template__': 'blogs.html',
+#         'blogs': blogs,
+#         # '__user__': request.__user__
+#     }
 @get('/')
-async def index(request):
+async def index(*, page='1'):
     """ 处理首页URL """
-    # users = await User.findAll()
-    # return {
-    #     '__template__': 'test.html',
-    #     'users': users
-    # }
-    summary = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
-    blogs = [
-        Blog(id='1', name='Test Blog', summary=summary, created_at=time.time()-120),
-        Blog(id='2', name='Something New', summary=summary, created_at=time.time()-3600),
-        Blog(id='3', name='Learn Swift', summary=summary, created_at=time.time()-7200)
-    ]
+    page_index = get_page_index(page)
+    num = await Blog.findNumber('count(id)')
+    p = Page(num, page_index)
+    if num == 0:
+        blogs = []
+    else:
+        blogs = await Blog.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
     return {
         '__template__': 'blogs.html',
-        'blogs': blogs,
-        # '__user__': request.__user__
+        'page': p,
+        'blogs': blogs
     }
 
 
@@ -121,6 +136,21 @@ async def get_blog(id):
     }
 
 
+@get('/manage/')
+def manage():
+    """ 获取管理页面 """
+    return 'redirect:/manage/comments'
+
+
+@get('/manage/blogs')
+def manage_blogs(*, page='1'):
+    """ 日志管理页面 """
+    return {
+        '__template__': 'manage_blogs.html',
+        'page_index': get_page_index(page)
+    }
+
+
 @get('/manage/blogs/create')
 def manage_create_blog():
     """ 创建日志页面 """
@@ -128,6 +158,34 @@ def manage_create_blog():
         '__template__': 'manage_blog_edit.html',
         'id': '',
         'action': '/api/blogs'
+    }
+
+
+@get('/manage/blogs/edit')
+def manage_edit_blog(*, id):
+    """ 编辑日志页面 """
+    return {
+        '__template__': 'manage_blog_edit.html',
+        'id': id,
+        'action': '/api/blogs/%s' % id
+    }
+
+
+@get('/manage/comments')
+def manage_comments(*, page='1'):
+    """ 评论管理页面 """
+    return {
+        '__template__': 'manage_comments.html',
+        'page_index': get_page_index(page)
+    }
+
+
+@get('/manage/users')
+def manage_users(*, page='1'):
+    """ 用户管理页面 """
+    return {
+        '__template__': 'manage_users.html',
+        'page_index': get_page_index(page)
     }
 
 
@@ -228,6 +286,39 @@ async def api_get_users(*, page='1'):
     return dict(page=p, users=users)
 
 
+@post('/api/users/{id}/delete')
+async def api_delete_users(id, request):
+    """ 删除用户API """
+    check_admin(request)
+    id_buff = id
+    user = await User.find(id)
+    if user is None:
+        raise APIResourceNotFoundError('Comment')
+    await user.remove()
+    # 给被删除的用户在评论中标记
+    comments = await Comment.findAll('user_id=?',[id])
+    if comments:
+        for comment in comments:
+            id = comment.id
+            c = await Comment.find(id)
+            c.user_name = c.user_name + ' (该用户已被删除)'
+            await c.update()
+    id = id_buff
+    return dict(id=id)
+
+
+@get('/api/blogs')
+async def api_blogs(*, page='1'):
+    """ 获取日志列表API """
+    page_index = get_page_index(page)
+    num = await Blog.findNumber('count(id)')
+    p = Page(num, page_index)
+    if num == 0:
+        return dict(page=p, blogs=())
+    blogs = await Blog.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+    return dict(page=p, blogs=blogs)
+
+
 @get('/api/blogs/{id}')
 async def api_get_blog(*, id):
     """ 获取日志详情API """
@@ -248,3 +339,69 @@ async def api_create_blog(request, *, name, summary, content):
     blog = Blog(user_id=request.__user__.id, user_name=request.__user__.name, user_image=request.__user__.image, name=name.strip(), summary=summary.strip(), content=content.strip())
     await blog.save()
     return blog
+
+
+@post('/api/blogs/{id}')
+async def api_update_blog(id, request, *, name, summary, content):
+    """ 编辑日志API """
+    check_admin(request)
+    blog = await Blog.find(id)
+    if not name or not name.strip():
+        raise APIValueError('name', 'Name cannot be empty.')
+    if not summary or not summary.strip():
+        raise APIValueError('summary', 'Summary cannot be empty.')
+    if not content or not content.strip():
+        raise APIValueError('content', 'Content cannot be empty.')
+    blog.name = name.strip()
+    blog.summary = summary.strip()
+    blog.content = content.strip()
+    await blog.update()
+    return blog
+
+
+@post('/api/blogs/{id}/delete')
+async def api_delete_blog(request, *, id):
+    """ 删除日志API """
+    check_admin(request)
+    blog = await Blog.find(id)
+    await blog.remove()
+    return dict(id=id)
+
+
+@get('/api/comments')
+async def api_comments(*, page='1'):
+    """ 获取评论信息API """
+    page_index = get_page_index(page)
+    num = await Comment.findNumber('count(id)')
+    p = Page(num, page_index)
+    if num == 0:
+        return dict(page=p, comments=())
+    comments = await Comment.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+    return dict(page=p, comments=comments)
+
+
+@post('/api/blogs/{id}/comments')
+async def api_create_comment(id, request, *, content):
+    """ 用户发表评论API """
+    user = request.__user__
+    if user is None:
+        raise APIPermissionError('Please signin first.')
+    if not content or not content.strip():
+        raise APIValueError('content')
+    blog = await Blog.find(id)
+    if blog is None:
+        raise APIResourceNotFoundError('Blog')
+    comment = Comment(blog_id=blog.id, user_id=user.id, user_name=user.name, user_image=user.image, content=content.strip())
+    await comment.save()
+    return comment
+
+
+@post('/api/comments/{id}/delete')
+async def api_delete_comments(id, request):
+    """ 管理员删除评论API """
+    check_admin(request)
+    c = await Comment.find(id)
+    if c is None:
+        raise APIResourceNotFoundError('Comment')
+    await c.remove()
+    return dict(id=id)
