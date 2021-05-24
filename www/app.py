@@ -75,6 +75,8 @@ async def auth_factory(app, handler):
             if user:
                 logging.info(f'Set current user: {user.email}')
                 request.__user__ = user
+        if request.path.startswith('/manage/') and (request.__user__ is None or not request.__user__.admin):
+            return web.HTTPFound('/signin')
         return (await handler(request))
     return auth
 
@@ -126,7 +128,7 @@ async def response_factory(app, handler):
             return web.Response(r)
         if isinstance(r, tuple) and len(r) == 2:
             t, m = r
-            if isinstance(t, int) and t >= 200 and t < 600:
+            if isinstance(t, int) and t >= 100 and t < 600:
                 return web.Response(t, str(m))
         # default:
         resp = web.Response(body=str(r).encode('utf-8'))
