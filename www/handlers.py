@@ -109,14 +109,14 @@ async def index(*, page='1'):
     """ 处理首页URL """
     page_index = get_page_index(page)
     num = await Blog.findNumber('count(id)')
-    p = Page(num, page_index)
+    page = Page(num, page_index)
     if num == 0:
         blogs = []
     else:
-        blogs = await Blog.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+        blogs = await Blog.findAll(orderBy='created_at desc', limit=(page.offset, page.limit))
     return {
         '__template__': 'blogs.html',
-        'page': p,
+        'page': page,
         'blogs': blogs
     }
 
